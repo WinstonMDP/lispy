@@ -1,3 +1,3 @@
 fn main() {
-    println!("{:#?}", lispy::parsed("hey way eey"));
+    println!("{:#?}", lispy::parse("hey way eey"));
 }
