@@ -1,20 +1,28 @@
-// TODO: Q-exr
-// TODO: hd and tl for Q-exr
-// TODO: eval keywoard
-
 use nom::{
     branch::alt,
+    bytes::complete::tag,
     character::complete::{alpha1, char},
     error::{self, ErrorKind},
+    sequence::delimited,
     Finish, Parser,
 };
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Exp {
-    // Vec with >= 2 len
+    // A Vec with >= 2 len
     Appl(Vec<Exp>),
+    Builtin(Builtin),
     Const(String),
     Lambda { arg: String, body: Box<Exp> },
+    // A Vec as stack for lists
+    Q(Vec<Exp>),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum Builtin {
+    Eval,
+    Hd,
+    Tl,
 }
 
 impl Exp {
@@ -35,6 +43,7 @@ impl Exp {
                     body.substitute(from, to);
                 }
             }
+            Exp::Q(_) | Exp::Builtin(_) => {}
         }
     }
 }
@@ -53,8 +62,11 @@ pub fn parse(input: &str) -> Result<Exp, error::Error<&str>> {
 
 fn exp(input: &str) -> nom::IResult<&str, Exp> {
     alt((
+        tag("hd").map(|_| Exp::Builtin(Builtin::Hd)),
+        tag("tl").map(|_| Exp::Builtin(Builtin::Tl)),
+        tag("eval").map(|_| Exp::Builtin(Builtin::Eval)),
         alpha1.map(|x: &str| Exp::Const(x.to_string())),
-        nom::sequence::delimited(
+        delimited(
             char('('),
             alt((
                 nom::sequence::tuple((alpha1, char('.'), exp)).map(|x| Exp::Lambda {
@@ -76,6 +88,15 @@ fn exp(input: &str) -> nom::IResult<&str, Exp> {
             )),
             char(')'),
         ),
+        delimited(
+            char('{'),
+            nom::multi::separated_list0(nom::character::complete::multispace1, exp),
+            char('}'),
+        )
+        .map(|mut x| {
+            x.reverse();
+            Exp::Q(x)
+        }),
     ))(input)
 }
 
@@ -84,15 +105,34 @@ pub fn eval(exp: &Exp) -> Exp {
     match exp {
         Exp::Appl(x) => {
             let mut acc = x[0].clone();
-            let mut it = x.iter();
+            let mut it = x.iter().peekable();
             it.next();
-            while let Exp::Lambda { arg, mut body } = acc {
-                if let Some(y) = it.next() {
+            while let Some(y) = it.peek() {
+                if let Exp::Lambda { arg, mut body } = acc {
                     body.substitute(&arg, y);
                     acc = *body;
+                    it.next();
                 } else {
-                    acc = Exp::Lambda { arg, body };
                     break;
+                }
+            }
+            if let Exp::Builtin(ref x) = acc {
+                if let Some(Exp::Q(y)) = it.peek() {
+                    match x {
+                        Builtin::Hd => {
+                            acc = Exp::Q(match y.last() {
+                                Some(z) => vec![z.clone()],
+                                None => Vec::new(),
+                            });
+                        }
+                        Builtin::Tl => {
+                            let mut tail = y.clone();
+                            tail.pop();
+                            acc = Exp::Q(tail);
+                        }
+                        Builtin::Eval => acc = eval(&Exp::Appl(y.clone())),
+                    }
+                    it.next();
                 }
             }
             if it.len() > 0 {
@@ -103,18 +143,19 @@ pub fn eval(exp: &Exp) -> Exp {
                 eval(&acc)
             }
         }
-        x @ Exp::Const(_) => x.clone(),
         Exp::Lambda { arg, body } => Exp::Lambda {
             arg: arg.clone(),
             body: Box::new(eval(body)),
         },
+        x @ (Exp::Const(_) | Exp::Q(_) | Exp::Builtin(_)) => x.clone(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use Exp::{Appl, Const, Lambda};
+    use Builtin::{Eval, Hd, Tl};
+    use Exp::{Appl, Const, Lambda, Q};
 
     #[test]
     fn parse_t_1() {
@@ -159,9 +200,9 @@ mod tests {
     fn parse_t_7() {
         assert_eq!(
             parse("(x.y)").unwrap(),
-            Exp::Lambda {
+            Lambda {
                 arg: "x".to_string(),
-                body: Box::new(Exp::Const("y".to_string()))
+                body: Box::new(Const("y".to_string()))
             }
         );
     }
@@ -174,6 +215,33 @@ mod tests {
     #[test]
     fn parse_t_9() {
         assert!(parse("x.y").is_err());
+    }
+
+    #[test]
+    fn parse_t_10() {
+        assert_eq!(
+            parse("{x y z}").unwrap(),
+            Q(vec![
+                Const("z".to_string()),
+                Const("y".to_string()),
+                Const("x".to_string())
+            ])
+        );
+    }
+
+    #[test]
+    fn parse_t_11() {
+        assert_eq!(
+            parse("(hd {x y z})").unwrap(),
+            Appl(vec![
+                Exp::Builtin(Builtin::Hd),
+                Q(vec![
+                    Const("z".to_string()),
+                    Const("y".to_string()),
+                    Const("x".to_string())
+                ])
+            ])
+        );
     }
 
     #[test]
@@ -231,14 +299,14 @@ mod tests {
                     arg: "x".to_string(),
                     body: Box::new(Lambda {
                         arg: "x".to_string(),
-                        body: Box::new(Exp::Const("y".to_string()))
+                        body: Box::new(Const("y".to_string()))
                     })
                 },
                 Const("x".to_string())
             ])),
             Lambda {
                 arg: "x".to_string(),
-                body: Box::new(Exp::Const("y".to_string()))
+                body: Box::new(Const("y".to_string()))
             }
         );
     }
@@ -251,14 +319,14 @@ mod tests {
                     arg: "y".to_string(),
                     body: Box::new(Lambda {
                         arg: "x".to_string(),
-                        body: Box::new(Exp::Const("y".to_string()))
+                        body: Box::new(Const("y".to_string()))
                     })
                 },
                 Const("z".to_string())
             ])),
             Lambda {
                 arg: "x".to_string(),
-                body: Box::new(Exp::Const("z".to_string()))
+                body: Box::new(Const("z".to_string()))
             }
         );
     }
@@ -271,11 +339,11 @@ mod tests {
                     arg: "x".to_string(),
                     body: Box::new(Lambda {
                         arg: "y".to_string(),
-                        body: Box::new(Exp::Appl(vec![
-                            Exp::Const("z".to_string()),
-                            Exp::Const("y".to_string()),
-                            Exp::Const("x".to_string()),
-                            Exp::Const("w".to_string())
+                        body: Box::new(Appl(vec![
+                            Const("z".to_string()),
+                            Const("y".to_string()),
+                            Const("x".to_string()),
+                            Const("w".to_string())
                         ]))
                     })
                 },
@@ -283,13 +351,76 @@ mod tests {
             ])),
             Lambda {
                 arg: "y".to_string(),
-                body: Box::new(Exp::Appl(vec![
-                    Exp::Const("z".to_string()),
-                    Exp::Const("y".to_string()),
-                    Exp::Const("q".to_string()),
-                    Exp::Const("w".to_string())
+                body: Box::new(Appl(vec![
+                    Const("z".to_string()),
+                    Const("y".to_string()),
+                    Const("q".to_string()),
+                    Const("w".to_string())
                 ]))
             }
+        );
+    }
+
+    #[test]
+    fn eval_t_8() {
+        assert_eq!(
+            eval(&Q(vec![
+                Const("i".to_string()),
+                Const("x".to_string()),
+                Const("z".to_string())
+            ])),
+            Q(vec![
+                Const("i".to_string()),
+                Const("x".to_string()),
+                Const("z".to_string())
+            ])
+        );
+    }
+
+    #[test]
+    fn eval_t_9() {
+        assert_eq!(
+            eval(&Appl(vec![Exp::Appl(vec![
+                Exp::Builtin(Hd),
+                Q(vec![
+                    Const("z".to_string()),
+                    Const("y".to_string()),
+                    Const("x".to_string())
+                ])
+            ])])),
+            Q(vec![Const("x".to_string())])
+        );
+    }
+
+    #[test]
+    fn eval_t_10() {
+        assert_eq!(
+            eval(&Appl(vec![Exp::Appl(vec![
+                Exp::Builtin(Tl),
+                Q(vec![
+                    Const("z".to_string()),
+                    Const("y".to_string()),
+                    Const("x".to_string())
+                ])
+            ])])),
+            Q(vec![Const("z".to_string()), Const("y".to_string()),])
+        );
+    }
+
+    #[test]
+    fn eval_t_11() {
+        assert_eq!(
+            eval(&Appl(vec![Exp::Appl(vec![
+                Exp::Builtin(Eval),
+                Q(vec![
+                    Lambda {
+                        arg: "x".to_string(),
+                        body: Box::new(Const("x".to_string()))
+                    },
+                    Const("y".to_string())
+                ])
+            ])])),
+            Const("y".to_string())
         );
     }
 }
