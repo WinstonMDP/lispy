@@ -1,7 +1,7 @@
 use nom::{
     branch::alt,
     bytes::complete::tag,
-    character::complete::{alpha1, char},
+    character::complete::{alpha1, char, multispace1},
     error::{self, ErrorKind},
     sequence::delimited,
     Finish, Parser,
@@ -26,7 +26,7 @@ pub enum Builtin {
 }
 
 impl Exp {
-    fn substitute(&mut self, from: &str, to: &Exp) {
+    fn substitute(&mut self, from: &str, to: &Self) {
         match self {
             Exp::Appl(x) => {
                 for y in x {
@@ -73,7 +73,7 @@ fn exp(input: &str) -> nom::IResult<&str, Exp> {
                     arg: x.0.to_string(),
                     body: Box::new(x.2),
                 }),
-                nom::multi::separated_list1(nom::character::complete::multispace1, exp)
+                nom::multi::separated_list1(multispace1, exp)
                     .and_then(|x: Vec<Exp>| {
                         if x.len() < 2 {
                             Err(nom::Err::Error(error::Error {
@@ -90,7 +90,7 @@ fn exp(input: &str) -> nom::IResult<&str, Exp> {
         ),
         delimited(
             char('{'),
-            nom::multi::separated_list0(nom::character::complete::multispace1, exp),
+            nom::multi::separated_list0(multispace1, exp),
             char('}'),
         )
         .map(|mut x| {
