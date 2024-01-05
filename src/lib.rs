@@ -1,3 +1,7 @@
+// TODO: Q-exr
+// TODO: hd and tl for Q-exr
+// TODO: eval keywoard
+
 use nom::{
     branch::alt,
     character::complete::{alpha1, char},
@@ -60,10 +64,12 @@ pub fn eval(exp: &Exp) -> Exp {
             let mut acc = x[0].clone();
             let mut it = x.iter();
             it.next();
-            while let Exp::Lambda { ref arg, ref body } = acc {
+            while let Exp::Lambda { arg, mut body } = acc {
                 if let Some(y) = it.next() {
-                    acc = substitute(body, arg, y);
+                    substitute(&mut body, &arg, y);
+                    acc = *body;
                 } else {
+                    acc = Exp::Lambda { arg, body };
                     break;
                 }
             }
@@ -83,24 +89,21 @@ pub fn eval(exp: &Exp) -> Exp {
     }
 }
 
-fn substitute(exp: &Exp, from: &str, to: &Exp) -> Exp {
+fn substitute(exp: &mut Exp, from: &str, to: &Exp) {
     match exp {
-        Exp::Appl(x) => Exp::Appl(x.iter().map(|y| substitute(y, from, to)).collect()),
-        x @ Exp::Const(y) => {
-            if y == from {
-                to.clone()
-            } else {
-                x.clone()
+        Exp::Appl(x) => {
+            for y in x {
+                substitute(y, from, to);
             }
         }
-        x @ Exp::Lambda { arg, body } => {
-            if arg == from {
-                x.clone()
-            } else {
-                Exp::Lambda {
-                    arg: arg.clone(),
-                    body: Box::new(substitute(body, from, to)),
-                }
+        Exp::Const(x) => {
+            if x == from {
+                *exp = to.clone();
+            }
+        }
+        Exp::Lambda { arg, body } => {
+            if arg != from {
+                substitute(body, from, to);
             }
         }
     }
