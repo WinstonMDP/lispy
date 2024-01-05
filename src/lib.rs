@@ -17,6 +17,28 @@ pub enum Exp {
     Lambda { arg: String, body: Box<Exp> },
 }
 
+impl Exp {
+    fn substitute(&mut self, from: &str, to: &Exp) {
+        match self {
+            Exp::Appl(x) => {
+                for y in x {
+                    y.substitute(from, to);
+                }
+            }
+            Exp::Const(x) => {
+                if x == from {
+                    *self = to.clone();
+                }
+            }
+            Exp::Lambda { arg, body } => {
+                if arg != from {
+                    body.substitute(from, to);
+                }
+            }
+        }
+    }
+}
+
 pub fn parse(input: &str) -> Result<Exp, error::Error<&str>> {
     let exp = exp(input).finish()?;
     if exp.0.is_empty() {
@@ -66,7 +88,7 @@ pub fn eval(exp: &Exp) -> Exp {
             it.next();
             while let Exp::Lambda { arg, mut body } = acc {
                 if let Some(y) = it.next() {
-                    substitute(&mut body, &arg, y);
+                    body.substitute(&arg, y);
                     acc = *body;
                 } else {
                     acc = Exp::Lambda { arg, body };
@@ -86,26 +108,6 @@ pub fn eval(exp: &Exp) -> Exp {
             arg: arg.clone(),
             body: Box::new(eval(body)),
         },
-    }
-}
-
-fn substitute(exp: &mut Exp, from: &str, to: &Exp) {
-    match exp {
-        Exp::Appl(x) => {
-            for y in x {
-                substitute(y, from, to);
-            }
-        }
-        Exp::Const(x) => {
-            if x == from {
-                *exp = to.clone();
-            }
-        }
-        Exp::Lambda { arg, body } => {
-            if arg != from {
-                substitute(body, from, to);
-            }
-        }
     }
 }
 
